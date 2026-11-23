@@ -1,3 +1,4 @@
+#TESTS FOR PUMP POWER INTAKE
 from machine import Pin
 import time
 
@@ -10,3 +11,139 @@ try:
     while True:
         pump_control.value(1)
         time.sleep(1)
+
+
+
+
+#TESTS FOR TEMPERATURE SENSOR FUNCTION CONVERTS READING TO FARENHEIT
+from machine import Pin
+import dht
+import time
+
+temperature_sensor = dht.DHT11(Pin(15))
+
+while True:
+    try:
+        temperature_sensor.measure()
+
+        temperature_c = temperature_sensor.temperature()
+        temperature_f = temperature_c * 9 / 5 + 32
+
+        print("Temperature:", temperature_c, "°C")
+        print("Temperature:", temperature_f, "°F")
+        print("----------------")
+
+    except OSError:
+        print("DHT11 reading failed")
+
+    time.sleep(2)
+
+
+
+
+#TESTS FOR LIGHT SENSOR, ALSO USED FOR MIN AND MAX VALUES
+from machine import Pin, I2C
+import time
+
+VEML7700_ADDRESS = 0x10
+
+i2c = I2C(
+    0,
+    sda=Pin(0),
+    scl=Pin(1),
+    freq=50000
+)
+
+print("I2C devices found:", i2c.scan())
+
+# Wake and configure the VEML7700
+# Low byte first, high byte second
+i2c.writeto_mem(
+    VEML7700_ADDRESS,
+    0x00,
+    bytes([0x00, 0x00])
+)
+
+# Allow the sensor to begin measuring
+time.sleep(0.5)
+
+def read_light():
+    data = i2c.readfrom_mem(
+        VEML7700_ADDRESS,
+        0x04,
+        2
+    )
+
+    return int.from_bytes(data, "little")
+
+while True:
+    try:
+        light_value = read_light()
+        print("Light sensor value:", light_value)
+
+    except OSError as error:
+        print("VEML7700 communication error:", error)
+
+    time.sleep(1)
+
+
+
+
+#TESTS FOR LIGHT/SENSOR RELATIONSHIP OUTPUT
+from machine import Pin, I2C, PWM
+import time
+
+# VEML7700 I2C connection
+i2c = I2C(
+    0,
+    scl=Pin(5),
+    sda=Pin(4),
+    freq=100000
+)
+
+VEML7700_ADDRESS = 0x10
+
+# Turn on VEML7700 with default settings
+i2c.writeto_mem(
+    VEML7700_ADDRESS,
+    0x00,
+    bytes([0x00, 0x00])
+)
+
+# Servo setup
+servo = PWM(Pin(14))
+servo.freq(50)
+
+def move_servo(angle):
+    pulse_us = 500 + (angle / 180) * 2000
+    duty = int((pulse_us / 20000) * 65535)
+    servo.duty_u16(duty)
+
+def read_light():
+    data = i2c.readfrom_mem(
+        VEML7700_ADDRESS,
+        0x04,
+        2
+    )
+
+    # VEML7700 sends the low byte first
+    return int.from_bytes(data, "little")
+
+# Starting position: shade open
+move_servo(30)
+
+print("I2C devices found:", i2c.scan())
+
+while True:
+    light_value = read_light()
+    print("Light sensor value:", light_value)
+
+    # Adjust these values after observing the readings
+    if light_value > 1000:
+        print("Bright light - closing shade")
+        move_servo(120)
+    else:
+        print("Low light - opening shade")
+        move_servo(30)
+
+    time.sleep(2)
