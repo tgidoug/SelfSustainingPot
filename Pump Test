@@ -1,0 +1,12 @@
+from machine import Pin
+import time
+
+# XY-MOS TRIG/PWM connected to Pico GP16
+pump_control = Pin(16, Pin.OUT)
+
+print("Pump test starting...")
+
+try:
+    while True:
+        pump_control.value(1)
+        time.sleep(1)
