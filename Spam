@@ -43,3 +43,38 @@ move_servo(30)
 print("I2C devices found:", i2c.scan())
 
 while True:
+ try:
+        # Read temperature
+        temperature_sensor.measure()
+        temperature_c = temperature_sensor.temperature()
+
+        # Read light
+        light_level = read_light()
+
+        print("Temperature:", temperature_c, "C")
+        print("Light level:", light_level)
+
+        # Close shade if temperature or light is too high
+        if temperature_c >= CLOSE_TEMPERATURE or light_level >= HIGH_LIGHT_LEVEL:
+            if not shade_closed:
+                print("Closing shade")
+                move_servo(CLOSED_ANGLE)
+                shade_closed = True
+
+        # Open shade only if temperature and light are both low
+        elif temperature_c <= OPEN_TEMPERATURE and light_level <= LOW_LIGHT_LEVEL:
+            if shade_closed:
+                print("Opening shade")
+                move_servo(OPEN_ANGLE)
+                shade_closed = False
+
+        # Keep current servo position between thresholds
+        else:
+            print("Keeping current shade position")
+
+        print("----------------------")
+        time.sleep(5)
+
+    except OSError as error:
+        print("Sensor reading failed:", error)
+        time.sleep(2)
