@@ -1,7 +1,17 @@
 from machine import Pin, I2C, PWM
+import dht
 import time
 
-# VEML7700 I2C connection
+# -------------------------
+# DHT11 temperature sensor
+# -------------------------
+temperature_sensor = dht.DHT11(Pin(17))
+
+# -------------------------
+# VEML7700 light sensor
+# SDA = GP0
+# SCL = GP1
+# -------------------------
 i2c = I2C(
     0,
     scl=Pin(1),
@@ -11,22 +21,30 @@ i2c = I2C(
 
 VEML7700_ADDRESS = 0x10
 
-# Turn on VEML7700 with default settings
+# Turn on the VEML7700
 i2c.writeto_mem(
     VEML7700_ADDRESS,
     0x00,
     bytes([0x00, 0x00])
 )
 
-# Servo setup
+time.sleep(0.5)
+
+# -------------------------
+# Servo
+# Signal wire = GP14
+# -------------------------
 servo = PWM(Pin(14))
 servo.freq(50)
 
 def move_servo(angle):
-    pulse_us = 500 + (angle / 180) * 2000
+    pulse_us = 1000 + (angle / 180) * 1000
     duty = int((pulse_us / 20000) * 65535)
     servo.duty_u16(duty)
 
+# -------------------------
+# Read light sensor
+# -------------------------
 def read_light():
     data = i2c.readfrom_mem(
         VEML7700_ADDRESS,
@@ -34,16 +52,28 @@ def read_light():
         2
     )
 
-    # VEML7700 sends the low byte first
     return int.from_bytes(data, "little")
 
-# Starting position: shade open
-move_servo(30)
+# -------------------------
+# Shade settings
+# -------------------------
+OPEN_ANGLE = 30
+CLOSED_ANGLE = 120
+
+OPEN_TEMPERATURE = 23
+CLOSE_TEMPERATURE = 26
+
+HIGH_LIGHT_LEVEL = 65000
+LOW_LIGHT_LEVEL = 20000
+
+# Start with shade open
+shade_closed = False
+move_servo(OPEN_ANGLE)
 
 print("I2C devices found:", i2c.scan())
 
 while True:
- try:
+    try:
         # Read temperature
         temperature_sensor.measure()
         temperature_c = temperature_sensor.temperature()
@@ -54,21 +84,20 @@ while True:
         print("Temperature:", temperature_c, "C")
         print("Light level:", light_level)
 
-        # Close shade if temperature or light is too high
+        # Close shade if temperature or light is high
         if temperature_c >= CLOSE_TEMPERATURE or light_level >= HIGH_LIGHT_LEVEL:
             if not shade_closed:
                 print("Closing shade")
                 move_servo(CLOSED_ANGLE)
                 shade_closed = True
 
-        # Open shade only if temperature and light are both low
+        # Open shade if temperature and light are both low
         elif temperature_c <= OPEN_TEMPERATURE and light_level <= LOW_LIGHT_LEVEL:
             if shade_closed:
                 print("Opening shade")
                 move_servo(OPEN_ANGLE)
                 shade_closed = False
 
-        # Keep current servo position between thresholds
         else:
             print("Keeping current shade position")
 
@@ -78,3 +107,4 @@ while True:
     except OSError as error:
         print("Sensor reading failed:", error)
         time.sleep(2)
+ 
