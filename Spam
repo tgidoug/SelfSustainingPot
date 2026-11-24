@@ -1,0 +1,45 @@
+from machine import Pin, I2C, PWM
+import time
+
+# VEML7700 I2C connection
+i2c = I2C(
+    0,
+    scl=Pin(1),
+    sda=Pin(0),
+    freq=100000
+)
+
+VEML7700_ADDRESS = 0x10
+
+# Turn on VEML7700 with default settings
+i2c.writeto_mem(
+    VEML7700_ADDRESS,
+    0x00,
+    bytes([0x00, 0x00])
+)
+
+# Servo setup
+servo = PWM(Pin(14))
+servo.freq(50)
+
+def move_servo(angle):
+    pulse_us = 500 + (angle / 180) * 2000
+    duty = int((pulse_us / 20000) * 65535)
+    servo.duty_u16(duty)
+
+def read_light():
+    data = i2c.readfrom_mem(
+        VEML7700_ADDRESS,
+        0x04,
+        2
+    )
+
+    # VEML7700 sends the low byte first
+    return int.from_bytes(data, "little")
+
+# Starting position: shade open
+move_servo(30)
+
+print("I2C devices found:", i2c.scan())
+
+while True:
