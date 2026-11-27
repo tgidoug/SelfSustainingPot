@@ -172,7 +172,64 @@ try:
         move_servo(2000)
         time.sleep(3)
 
+
+
+
+#TO ZERO THE SERVO
+from machine import Pin, PWM
+import time
+
+servo = PWM(Pin(14))
+servo.freq(50)
+
+# Neutral center position
+START_POSITION_US = 1500
+
+duty = int(START_POSITION_US * 65535 / 20000)
+servo.duty_u16(duty)
+
+time.sleep(1)
+print("Servo centered and holding starter position.")
 except KeyboardInterrupt:
     # Stop sending PWM and leave the servo powered off
     servo.deinit()
     print("Servo test stopped")
+
+
+
+
+#TO FIND THE PARAMETERS OF THE SOIL HUMIDITY SENSOR
+from machine import ADC, Pin
+import time
+
+soil_sensor = ADC(Pin(26))
+
+# Keep pump control OFF
+pump = Pin(16, Pin.OUT, value=0)
+
+print("Soil calibration test")
+print("Higher reading = drier soil")
+print("Lower reading = wetter soil")
+print("Press Ctrl+C to stop.\n")
+
+time.sleep(1)
+
+try:
+    while True:
+        total = 0
+
+        # Average 20 readings
+        for _ in range(20):
+            total += soil_sensor.read_u16()
+            time.sleep_ms(10)
+
+        raw = total // 20
+        voltage = raw * 3.3 / 65535
+
+        print("RAW:", raw,
+              "| Voltage:", round(voltage, 3), "V")
+
+        time.sleep(1)
+
+finally:
+    pump.value(0)
