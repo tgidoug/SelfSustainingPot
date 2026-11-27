@@ -6,7 +6,7 @@ import time
 # CALIBRATION: replace None with YOUR measured values
 # ==================================================
 
-SOIL_DRY_RAW = 1500       # Higher raw reading in dry soil
+SOIL_DRY_RAW = 15000       # Higher raw reading in dry soil
 SOIL_WET_RAW = 800       # Lower reading in thoroughly wet,
                           # drained soil
 
