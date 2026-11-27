@@ -10,8 +10,8 @@ SOIL_DRY_RAW = None       # Higher raw reading in dry soil
 SOIL_WET_RAW = None       # Lower reading in thoroughly wet,
                           # drained soil
 
-LIGHT_DARK_RAW = None     # Reading with sensor covered
-LIGHT_PEAK_RAW = None     # Reading in direct peak sunlight
+LIGHT_DARK_RAW = 20000     # Reading with sensor covered
+LIGHT_PEAK_RAW = 65000     # Reading in direct peak sunlight
 
 # These are relative calibrated percentages,
 # NOT laboratory soil-water content or PAR measurements.
