@@ -1,4 +1,99 @@
+from machine import Pin, ADC, I2C, PWM
+import dht
+import time
 
+# ==================================================
+# CALIBRATION: replace None with YOUR measured values
+# ==================================================
+
+SOIL_DRY_RAW = 2000       # Higher raw reading in dry soil
+SOIL_WET_RAW = 800       # Lower reading in thoroughly wet,
+                          # drained soil
+
+LIGHT_DARK_RAW = 20000     # Reading with sensor covered
+LIGHT_PEAK_RAW = 65000     # Reading in direct peak sunlight
+
+# These are relative calibrated percentages,
+# NOT laboratory soil-water content or PAR measurements.
+
+# ==================================================
+# CONTROL SETTINGS
+# ==================================================
+
+SOIL_START_PERCENT = 40
+
+SHADE_CLOSE_F = 86
+SHADE_EMERGENCY_F = 95
+SHADE_OPEN_F = 81
+
+LIGHT_CLOSE_PERCENT = 80
+LIGHT_OPEN_PERCENT = 70
+SUNLIGHT_MIN_PERCENT = 30
+SUNLIGHT_TARGET_HOURS = 6
+
+# One short watering event at most once every rolling 24 hours.
+# Measure the pump's delivered volume before changing this duration.
+PUMP_DOSE_SECONDS = 2
+SOIL_CHECK_INTERVAL_MS = 2 * 60 * 60 * 1000
+WATER_LOCKOUT_MS = 24 * 60 * 60 * 1000
+
+# Prevent another immediate watering after a restart
+STARTUP_WATER_WAIT_MS = 30 * 60 * 1000
+
+# Use your verified servo positions.
+# Swap these if the canopy moves in the wrong direction.
+SERVO_OPEN_US = 1500
+SERVO_CLOSED_US = 2325
+SERVO_MOVE_SECONDS = 1
+
+SENSOR_INTERVAL_MS = 8000
+DAY_MS = 24 * 60 * 60 * 1000
+
+# ==================================================
+# HARDWARE
+# ==================================================
+
+pump = Pin(16, Pin.OUT, value=0)
+
+servo = PWM(Pin(14))
+servo.freq(50)
+servo.duty_u16(0)
+
+temperature_sensor = dht.DHT11(Pin(17))
+soil_sensor = ADC(Pin(26))
+
+i2c = I2C(
+    0,
+    sda=Pin(0),
+    scl=Pin(1),
+    freq=10000
+)
+
+LIGHT_ADDRESS = 0x10
+light_ready = False
+shade_closed = None
+
+soil_calibrated = (
+    SOIL_DRY_RAW is not None
+    and SOIL_WET_RAW is not None
+    and SOIL_DRY_RAW > SOIL_WET_RAW
+)
+
+light_calibrated = (
+    LIGHT_DARK_RAW is not None
+    and LIGHT_PEAK_RAW is not None
+    and 0 <= LIGHT_DARK_RAW < LIGHT_PEAK_RAW <= 65000
+)
+
+# ==================================================
+# FUNCTIONS
+# ==================================================
+
+def clamp_percent(value):
+    return max(0, min(100, value))
+
+
+def set_shade(close):
         # ---------- Shade decision ----------
         if not sensors_ok:
             set_shade(True)
