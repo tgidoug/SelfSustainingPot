@@ -240,8 +240,8 @@ servo = PWM(Pin(14))
 servo.freq(50)
 
 START_US = 1500
-TARGET_US = 2000
-DURATION_MS = 4000
+TARGET_US = 2325
+DURATION_MS = 8000
 UPDATE_MS = 20
 
 def set_position(pulse_us):
