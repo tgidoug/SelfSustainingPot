@@ -6,8 +6,8 @@ import time
 # CALIBRATION: replace None with YOUR measured values
 # ==================================================
 
-SOIL_DRY_RAW = None       # Higher raw reading in dry soil
-SOIL_WET_RAW = None       # Lower reading in thoroughly wet,
+SOIL_DRY_RAW = 1500       # Higher raw reading in dry soil
+SOIL_WET_RAW = 800       # Lower reading in thoroughly wet,
                           # drained soil
 
 LIGHT_DARK_RAW = 20000     # Reading with sensor covered
