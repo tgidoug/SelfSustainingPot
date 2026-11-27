@@ -390,6 +390,80 @@ except KeyboardInterrupt:
 except KeyboardInterrupt:
     print("\nProgram stopped")
 
+
+
+
+#PUMP + SOIL HUMIDITY READING TESTS
+from machine import ADC, Pin
+import time
+
+pump = Pin(16, Pin.OUT, value=0)
+soil = ADC(Pin(26))
+
+SOIL_DRY_RAW = 15000
+SOIL_WET_RAW = 800
+
+START_PERCENT = 40
+STOP_PERCENT = 60
+REQUIRED_READINGS = 10
+MAX_RUN_SECONDS = 2
+
+dry_count = 0
+wet_count = 0
+running = False
+
+try:
+    while True:
+        raw = soil.read_u16()
+
+        if raw == 0 or raw == 65535:
+            print("Check soil sensor wiring. Pump stopped.")
+            break
+
+        moisture = 100 * (
+            (SOIL_DRY_RAW - raw)
+            / (SOIL_DRY_RAW - SOIL_WET_RAW)
+        )
+        moisture = max(0, min(100, moisture))
+
+        print("Raw:", raw,
+              "| Moisture:", round(moisture, 1), "%")
+
+        if not running:
+            if moisture < START_PERCENT:
+                dry_count += 1
+            else:
+                dry_count = 0
+
+            if dry_count >= REQUIRED_READINGS:
+                started = time.ticks_ms()
+                pump.value(1)
+                running = True
+                print("PUMP ON")
+
+        else:
+            if moisture >= STOP_PERCENT:
+                wet_count += 1
+            else:
+                wet_count = 0
+
+            elapsed = time.ticks_diff(
+                time.ticks_ms(), started
+            )
+
+            if wet_count >= REQUIRED_READINGS:
+                print("Wet target confirmed.")
+                break
+
+            if elapsed >= MAX_RUN_SECONDS * 1000:
+                print("Pump safety timeout reached.")
+                break
+
+        time.sleep_ms(100)
+
+finally:
+    pump.value(0)
+    print("PUMP OFF")
 finally:
     pump.value(0)
     servo.duty_u16(0)
