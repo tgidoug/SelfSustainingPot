@@ -240,23 +240,41 @@ servo = PWM(Pin(14))
 servo.freq(50)
 
 START_US = 1500
-TARGET_US = 1000
+TARGET_US = 2000
+DURATION_MS = 4000
+UPDATE_MS = 20
 
 def set_position(pulse_us):
-    servo.duty_u16(int(pulse_us * 65535 / 20000))
+    duty = int(pulse_us * 65535 / 20000)
+    servo.duty_u16(duty)
 
-set_position(START_US)
-time.sleep(2)
+try:
+    set_position(START_US)
+    time.sleep(1)
 
-# Move gradually instead of jumping
-step = -10 if TARGET_US < START_US else 10
+    steps = DURATION_MS // UPDATE_MS
 
-for pulse in range(START_US, TARGET_US, step):
-    set_position(pulse)
-    time.sleep_ms(50)
+    for step in range(steps + 1):
+        progress = step / steps
 
-set_position(TARGET_US)
-print("Holding at:", TARGET_US, "microseconds")
+        # Smooth acceleration and deceleration
+        smooth = progress * progress * (3 - 2 * progress)
+
+        pulse = START_US + (TARGET_US - START_US) * smooth
+        set_position(pulse)
+
+        time.sleep_ms(UPDATE_MS)
+
+    print("Movement complete; holding position.")
+
+except KeyboardInterrupt:
+    servo.duty_u16(0)
+    servo.deinit()
+    print("Servo pulses stopped.")
+
+
+
+
 
         time.sleep(1)
 
