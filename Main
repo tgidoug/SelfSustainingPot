@@ -1,1 +1,394 @@
+from machine import Pin, ADC, I2C, PWM
+import dht
+import time
 
+# ==================================================
+# CALIBRATION: replace None with YOUR measured values
+# ==================================================
+
+SOIL_DRY_RAW = None       # Higher raw reading in dry soil
+SOIL_WET_RAW = None       # Lower reading in thoroughly wet,
+                          # drained soil
+
+LIGHT_DARK_RAW = None     # Reading with sensor covered
+LIGHT_PEAK_RAW = None     # Reading in direct peak sunlight
+
+# These are relative calibrated percentages,
+# NOT laboratory soil-water content or PAR measurements.
+
+# ==================================================
+# CONTROL SETTINGS
+# ==================================================
+
+SOIL_START_PERCENT = 40
+SOIL_STOP_PERCENT = 60
+
+SHADE_CLOSE_F = 86
+SHADE_EMERGENCY_F = 95
+SHADE_OPEN_F = 81
+
+LIGHT_CLOSE_PERCENT = 80
+LIGHT_OPEN_PERCENT = 70
+SUNLIGHT_MIN_PERCENT = 30
+SUNLIGHT_TARGET_HOURS = 6
+
+PUMP_DOSE_SECONDS = 2
+WATER_WAIT_MS = 30 * 60 * 1000
+
+# Safety limits: adjust only after measuring pump output
+MAX_DOSES_PER_CYCLE = 3
+MAX_DOSES_PER_24H = 12
+
+# Prevent another immediate watering after a restart
+STARTUP_WATER_WAIT_MS = 30 * 60 * 1000
+
+# Use your verified servo positions.
+# Swap these if the canopy moves in the wrong direction.
+SERVO_OPEN_US = 1200
+SERVO_CLOSED_US = 1800
+SERVO_MOVE_SECONDS = 1
+
+SENSOR_INTERVAL_MS = 5000
+DAY_MS = 24 * 60 * 60 * 1000
+
+# ==================================================
+# HARDWARE
+# ==================================================
+
+pump = Pin(16, Pin.OUT, value=0)
+
+servo = PWM(Pin(14))
+servo.freq(50)
+servo.duty_u16(0)
+
+temperature_sensor = dht.DHT11(Pin(17))
+soil_sensor = ADC(Pin(26))
+
+i2c = I2C(
+    0,
+    sda=Pin(0),
+    scl=Pin(1),
+    freq=10000
+)
+
+LIGHT_ADDRESS = 0x10
+light_ready = False
+shade_closed = None
+
+soil_calibrated = (
+    SOIL_DRY_RAW is not None
+    and SOIL_WET_RAW is not None
+    and SOIL_DRY_RAW > SOIL_WET_RAW
+)
+
+light_calibrated = (
+    LIGHT_DARK_RAW is not None
+    and LIGHT_PEAK_RAW is not None
+    and 0 <= LIGHT_DARK_RAW < LIGHT_PEAK_RAW < 65000
+)
+
+# ==================================================
+# FUNCTIONS
+# ==================================================
+
+def clamp_percent(value):
+    return max(0, min(100, value))
+
+
+def set_shade(close):
+    global shade_closed
+
+    if shade_closed == close:
+        return
+
+    # Make certain pump is OFF before moving
+    pump.value(0)
+
+    pulse_us = SERVO_CLOSED_US if close else SERVO_OPEN_US
+    servo.duty_u16(int(pulse_us * 65535 / 20000))
+
+    try:
+        time.sleep(SERVO_MOVE_SECONDS)
+    finally:
+        # Release PWM after movement to reduce holding load.
+        # This does not disconnect servo power.
+        servo.duty_u16(0)
+
+    shade_closed = close
+    print("SHADE:", "CLOSED" if close else "OPEN")
+
+
+def read_temperature():
+    try:
+        temperature_sensor.measure()
+        c = temperature_sensor.temperature()
+        return c, c * 9 / 5 + 32
+
+    except OSError as error:
+        print("DHT11 ERROR:", error)
+        return None, None
+
+
+def read_light():
+    global light_ready
+
+    try:
+        if not light_ready:
+            if LIGHT_ADDRESS not in i2c.scan():
+                raise OSError("VEML7700 not detected")
+
+            # Gain 1/8, integration 25 ms:
+            # low sensitivity for outdoor sunlight.
+            # Calibrate LIGHT_PEAK_RAW with THESE settings.
+            i2c.writeto_mem(
+                LIGHT_ADDRESS,
+                0x00,
+                b'\x00\x13'
+            )
+
+            # Disable power-saving mode
+            i2c.writeto_mem(
+                LIGHT_ADDRESS,
+                0x03,
+                b'\x00\x00'
+            )
+
+            time.sleep_ms(200)
+            light_ready = True
+
+        data = i2c.readfrom_mem(LIGHT_ADDRESS, 0x04, 2)
+        raw = data[0] | (data[1] << 8)
+
+        percent = None
+
+        if light_calibrated:
+            percent = clamp_percent(
+                100 * (raw - LIGHT_DARK_RAW)
+                / (LIGHT_PEAK_RAW - LIGHT_DARK_RAW)
+            )
+
+        if raw >= 65000:
+            print("LIGHT WARNING: near saturation; check calibration")
+
+        return raw, percent
+
+    except OSError as error:
+        light_ready = False
+        print("LIGHT ERROR:", error)
+        return None, None
+
+
+def read_soil():
+    total = 0
+
+    for _ in range(10):
+        total += soil_sensor.read_u16()
+        time.sleep_ms(5)
+
+    raw = total // 10
+
+    if raw == 0 or raw == 65535:
+        print("SOIL WARNING: reading at limit; check wiring")
+        return raw, None
+
+    percent = None
+
+    if soil_calibrated:
+        percent = clamp_percent(
+            100 * (SOIL_DRY_RAW - raw)
+            / (SOIL_DRY_RAW - SOIL_WET_RAW)
+        )
+
+    return raw, percent
+
+
+def water_once():
+    # Servo movement must have finished before calling.
+    servo.duty_u16(0)
+    print("PUMP ON:", PUMP_DOSE_SECONDS, "seconds")
+
+    try:
+        pump.value(1)
+        time.sleep(PUMP_DOSE_SECONDS)
+
+    finally:
+        pump.value(0)
+        print("PUMP OFF")
+
+
+# ==================================================
+# MAIN PROGRAM
+# ==================================================
+
+watering_cycle = False
+cycle_doses = 0
+daily_doses = 0
+
+sunlight_seconds = 0
+previous_sunlight = False
+
+try:
+    # Required startup state
+    pump.value(0)
+    set_shade(True)
+
+    print("Waiting for sensors to stabilize...")
+    time.sleep(2)
+
+    if not soil_calibrated:
+        print("SET SOIL CALIBRATION: watering disabled")
+
+    if not light_calibrated:
+        print("SET LIGHT CALIBRATION: shade stays closed")
+        print("Use peak-sun readings below 65000")
+
+    boot_time = time.ticks_ms()
+    day_start = boot_time
+    previous_time = boot_time
+    soil_check_due = boot_time
+
+    while True:
+        loop_start = time.ticks_ms()
+
+        # Count approximate unshaded sunlight exposure.
+        # Only count time between reasonably close samples.
+        elapsed = time.ticks_diff(loop_start, previous_time)
+        previous_time = loop_start
+
+        if time.ticks_diff(loop_start, day_start) >= DAY_MS:
+            print("24-HOUR SUNLIGHT TOTAL:",
+                  round(sunlight_seconds / 3600, 2), "hours")
+
+            if sunlight_seconds < SUNLIGHT_TARGET_HOURS * 3600:
+                print("WARNING: sunlight target not reached")
+
+            sunlight_seconds = 0
+            daily_doses = 0
+            day_start = loop_start
+
+        elif previous_sunlight and 0 < elapsed <= 15000:
+            sunlight_seconds += elapsed / 1000
+
+        # ---------- Temperature and light ----------
+        temperature_c, temperature_f = read_temperature()
+        light_raw, light_percent = read_light()
+
+        print("\nTemperature:", temperature_c, "C /",
+              temperature_f, "F")
+        print("Light raw:", light_raw,
+              "| Relative light %:", light_percent)
+
+        sensors_ok = (
+            temperature_f is not None
+            and light_percent is not None
+        )
+
+        # ---------- Shade decision ----------
+        if not sensors_ok:
+            set_shade(True)
+
+        elif temperature_f >= SHADE_EMERGENCY_F:
+            set_shade(True)
+
+        elif (
+            temperature_f >= SHADE_CLOSE_F
+            and light_percent >= LIGHT_CLOSE_PERCENT
+        ):
+            set_shade(True)
+
+        elif (
+            temperature_f <= SHADE_OPEN_F
+            or light_percent < LIGHT_OPEN_PERCENT
+        ):
+            set_shade(False)
+
+        # Otherwise keep last commanded position
+
+        previous_sunlight = (
+            sensors_ok
+            and light_percent >= SUNLIGHT_MIN_PERCENT
+            and shade_closed is False
+        )
+
+        # ---------- Soil and watering ----------
+        now = time.ticks_ms()
+
+        if time.ticks_diff(now, soil_check_due) >= 0:
+            raw, moisture = read_soil()
+
+            print("Soil raw:", raw,
+                  "| Relative moisture %:", moisture)
+
+            # Normally check again next sensor cycle
+            soil_check_due = time.ticks_add(
+                time.ticks_ms(), SENSOR_INTERVAL_MS
+            )
+
+            if moisture is not None:
+                if moisture >= SOIL_STOP_PERCENT:
+                    watering_cycle = False
+                    cycle_doses = 0
+
+                elif moisture < SOIL_START_PERCENT:
+                    watering_cycle = True
+
+                if watering_cycle:
+                    startup_remaining = (
+                        STARTUP_WATER_WAIT_MS
+                        - time.ticks_diff(now, boot_time)
+                    )
+
+                    if startup_remaining > 0:
+                        print("Startup watering lockout active")
+
+                    elif not sensors_ok:
+                        print("Watering blocked: fix sensor/calibration")
+
+                    elif cycle_doses >= MAX_DOSES_PER_CYCLE:
+                        print("WATERING LOCKOUT: inspect soil,")
+                        print("reservoir, tubing and sensor placement")
+
+                    elif daily_doses >= MAX_DOSES_PER_24H:
+                        print("24-hour watering limit reached")
+
+                    else:
+                        water_once()
+                        cycle_doses += 1
+                        daily_doses += 1
+
+                        # No soil checks for 30 minutes.
+                        # Temperature and shade control continue.
+                        soil_check_due = time.ticks_add(
+                            time.ticks_ms(), WATER_WAIT_MS
+                        )
+
+                        print("Waiting 30 minutes before soil recheck")
+
+        else:
+            remaining = time.ticks_diff(soil_check_due, now)
+            print("Next soil check in:",
+                  round(remaining / 60000, 1), "minutes")
+
+        print("Unshaded sunlight:",
+              round(sunlight_seconds / 3600, 2),
+              "/", SUNLIGHT_TARGET_HOURS, "hours")
+
+        print("Watering doses:", cycle_doses, "this cycle;",
+              daily_doses, "this 24-hour period")
+
+        # Complete approximately one sensor cycle every 5 seconds
+        remaining = SENSOR_INTERVAL_MS - time.ticks_diff(
+            time.ticks_ms(), loop_start
+        )
+
+        if remaining > 0:
+            time.sleep_ms(remaining)
+
+except KeyboardInterrupt:
+    print("\nProgram stopped")
+
+finally:
+    pump.value(0)
+    servo.duty_u16(0)
+    servo.deinit()
+    print("Pump OFF; servo pulses stopped")
