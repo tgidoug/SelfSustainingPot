@@ -44,11 +44,11 @@ STARTUP_WATER_WAIT_MS = 30 * 60 * 1000
 
 # Use your verified servo positions.
 # Swap these if the canopy moves in the wrong direction.
-SERVO_OPEN_US = 1200
-SERVO_CLOSED_US = 1800
+SERVO_OPEN_US = 1500
+SERVO_CLOSED_US = 2325
 SERVO_MOVE_SECONDS = 1
 
-SENSOR_INTERVAL_MS = 5000
+SENSOR_INTERVAL_MS = 8000
 DAY_MS = 24 * 60 * 60 * 1000
 
 # ==================================================
