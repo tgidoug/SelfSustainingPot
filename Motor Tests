@@ -228,7 +228,13 @@ try:
 
         print("RAW:", raw,
               "| Voltage:", round(voltage, 3), "V")
+>>> %Run -c $EDITOR_CONTENT
 
+MPY: soft reboot
+Traceback (most recent call last):
+  File "<stdin>", line 28
+SyntaxError: invalid syntax
+>>> 
 
 
 
