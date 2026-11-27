@@ -271,12 +271,121 @@ except KeyboardInterrupt:
     servo.duty_u16(0)
     servo.deinit()
     print("Servo pulses stopped.")
+    time.sleep(1)
 
 
 
 
+#TESTS PUMP
 
-        time.sleep(1)
+        # ---------- Shade decision ----------
+        if not sensors_ok:
+            set_shade(True)
+
+        elif temperature_f >= SHADE_EMERGENCY_F:
+            set_shade(True)
+
+        elif (
+            temperature_f >= SHADE_CLOSE_F
+            and light_percent >= LIGHT_CLOSE_PERCENT
+        ):
+            set_shade(True)
+
+        elif (
+            temperature_f <= SHADE_OPEN_F
+            or light_percent < LIGHT_OPEN_PERCENT
+        ):
+            set_shade(False)
+
+        # Otherwise keep last commanded position
+
+        previous_sunlight = (
+            sensors_ok
+            and light_percent >= SUNLIGHT_MIN_PERCENT
+            and shade_closed is False
+        )
+
+        # ---------- Soil and watering ----------
+        # Read at startup, then every 2 hours.
+        # Only one pump dose is allowed per rolling 24 hours.
+        now = time.ticks_ms()
+
+        if time.ticks_diff(now, soil_check_due) >= 0:
+            raw, moisture = read_soil()
+
+            print("Soil raw:", raw,
+                  "| Relative moisture %:", moisture)
+
+            soil_check_due = time.ticks_add(
+                time.ticks_ms(), SOIL_CHECK_INTERVAL_MS
+            )
+
+            if moisture is None:
+                print("Watering blocked: check soil calibration/wiring")
+
+            elif moisture >= SOIL_START_PERCENT:
+                print("Soil is moist enough. No watering needed.")
+
+            elif watering_allowed_at is not None:
+                print("Soil is dry; watering lockout is still active.")
+
+            elif not sensors_ok:
+                print("Watering blocked: fix temperature/light sensor")
+                print("or light calibration.")
+
+            else:
+                # set_shade() has already finished any servo movement.
+                water_once()
+                total_waterings += 1
+
+                # Start the 24-hour timer when watering finishes.
+                watering_allowed_at = time.ticks_add(
+                    time.ticks_ms(), WATER_LOCKOUT_MS
+                )
+
+                soil_check_due = time.ticks_add(
+                    time.ticks_ms(), SOIL_CHECK_INTERVAL_MS
+                )
+
+                print("Watered once. No more watering for 24 hours.")
+
+        now = time.ticks_ms()
+        soil_remaining = max(
+            0, time.ticks_diff(soil_check_due, now)
+        )
+
+        print("Next soil check in:",
+              round(soil_remaining / 60000, 1), "minutes")
+
+        if watering_allowed_at is not None:
+            water_remaining = max(
+                0, time.ticks_diff(watering_allowed_at, now)
+            )
+
+            print("Watering lockout remaining:",
+                  round(water_remaining / 3600000, 2), "hours")
+        else:
+            print("Watering permitted at the next dry-soil check.")
+
+        print("Unshaded sunlight:",
+              round(sunlight_seconds / 3600, 2),
+              "/", SUNLIGHT_TARGET_HOURS, "hours")
+
+        print("Total watering events this run:", total_waterings)
+
+        # Complete approximately one sensor cycle every 8 seconds
+        remaining = SENSOR_INTERVAL_MS - time.ticks_diff(
+            time.ticks_ms(), loop_start
+        )
+
+        if remaining > 0:
+            time.sleep_ms(remaining)
+
+except KeyboardInterrupt:
+    print("\nProgram stopped")
 
 finally:
     pump.value(0)
+    servo.duty_u16(0)
+    servo.deinit()
+    print("Pump OFF; servo pulses stopped")
